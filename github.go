@@ -1,7 +1,9 @@
 package gogithub
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"net/http"
@@ -34,6 +36,7 @@ type GitHub interface {
 	// FindPullRequestOid returns the OID of the PR
 	FindPullRequestOid(ctx context.Context, owner string, name string, number int64) (githubv4.ID, error)
 	GetAccessToken(ctx context.Context) (string, error)
+	TriggerWorkflow(ctx context.Context, owner string, repo string, workflow_id string, ref string, inputs map[string]string) error
 }
 
 type RepositoryInfo struct {
@@ -61,6 +64,46 @@ type GithubGraphqlAPI struct {
 	Logger        *zap.Logger
 	tokenFunction func(ctx context.Context) (string, error)
 	findPrCache   ExpireCache[findPrKey, findPrValue]
+	HttpClient    *http.Client
+}
+
+type triggerWorkflowBody struct {
+	Ref    string            `json:"ref"`
+	Inputs map[string]string `json:"inputs"`
+}
+
+func (g *GithubGraphqlAPI) TriggerWorkflow(ctx context.Context, owner string, repo string, workflow_id string, ref string, inputs map[string]string) error {
+	g.Logger.Debug("TriggerWorkflow", zap.String("owner", owner), zap.String("repo", repo), zap.String("workflow_id", workflow_id), zap.String("ref", ref), zap.Any("inputs", inputs))
+	defer g.Logger.Debug("Done TriggerWorkflow")
+	token, err := g.GetAccessToken(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get access token: %w", err)
+	}
+	body := triggerWorkflowBody{
+		Ref:    ref,
+		Inputs: inputs,
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, workflow_id)
+	encodedBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to encode request body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(url, owner, repo, workflow_id), bytes.NewReader(encodedBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "token "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	resp, err := g.HttpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("failed to trigger workflow: %s", resp.Status)
+	}
+	return nil
 }
 
 type findPrKey struct {
@@ -229,8 +272,9 @@ func intFromOsEnv(s string) int64 {
 	return i
 }
 
-func createGraphqlAPI(gql *githubv4.Client, logger *zap.Logger, tokenFunction func(context.Context) (string, error)) *GithubGraphqlAPI {
+func createGraphqlAPI(gql *githubv4.Client, httpClient *http.Client, logger *zap.Logger, tokenFunction func(context.Context) (string, error)) *GithubGraphqlAPI {
 	return &GithubGraphqlAPI{
+		HttpClient:    httpClient,
 		ClientV4:      gql,
 		Logger:        logger,
 		tokenFunction: tokenFunction,
@@ -247,7 +291,7 @@ func clientFromToken(_ context.Context, logger *zap.Logger, token string) (GitHu
 	httpClient := oauth2.NewClient(context.Background(), src)
 	httpClient.Transport = DebugLogTransport(httpClient.Transport, logger)
 	gql := githubv4.NewClient(httpClient)
-	return createGraphqlAPI(gql, logger, func(_ context.Context) (string, error) {
+	return createGraphqlAPI(gql, httpClient, logger, func(_ context.Context) (string, error) {
 		return token, nil
 	}), nil
 }
@@ -264,8 +308,9 @@ func clientFromPEM(ctx context.Context, logger *zap.Logger, baseRoundTripper htt
 	if err != nil {
 		return nil, fmt.Errorf("unable to validate token: %w", err)
 	}
-	gql := githubv4.NewClient(&http.Client{Transport: DebugLogTransport(trans, logger)})
-	return createGraphqlAPI(gql, logger, trans.Token), nil
+	client := &http.Client{Transport: DebugLogTransport(trans, logger)}
+	gql := githubv4.NewClient(client)
+	return createGraphqlAPI(gql, client, logger, trans.Token), nil
 }
 
 func tokenFromGithubCLI() string {
