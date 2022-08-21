@@ -21,11 +21,3 @@ func readEnvFile(t *testing.T, rootDir string) {
 		}
 	}
 }
-
-func envOrSkip(t *testing.T, env string) string {
-	body := os.Getenv(env)
-	if body == "" {
-		t.Skip(env + " not set, skipping test")
-	}
-	return body
-}

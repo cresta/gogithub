@@ -8,6 +8,7 @@ import (
 )
 
 func newClientOrSkip(t *testing.T) GitHub {
+	readEnvFile(t, ".")
 	logger := zaptest.NewLogger(t)
 	gh, err := NewGQLClient(context.Background(), logger, nil)
 	if err != nil {
