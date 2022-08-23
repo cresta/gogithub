@@ -89,7 +89,7 @@ func (g *GithubGraphqlAPI) TriggerWorkflow(ctx context.Context, owner string, re
 		return fmt.Errorf("failed to encode request body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(url, owner, repo, workflow_id), bytes.NewReader(encodedBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(encodedBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
