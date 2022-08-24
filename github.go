@@ -250,6 +250,7 @@ type NewGQLClientConfig struct {
 	InstallationID int64
 	PEMKeyLoc      string
 	Token          string
+	PEMKey         string
 }
 
 var DefaultGQLClientConfig = NewGQLClientConfig{
@@ -257,6 +258,7 @@ var DefaultGQLClientConfig = NewGQLClientConfig{
 	AppID:          intFromOsEnv("GITHUB_APP_ID"),
 	InstallationID: intFromOsEnv("GITHUB_INSTALLATION_ID"),
 	PEMKeyLoc:      os.Getenv("GITHUB_PEM_KEY_LOC"),
+	PEMKey:         os.Getenv("GITHUB_PEM_KEY"),
 	Token:          os.Getenv("GITHUB_TOKEN"),
 }
 
@@ -296,11 +298,17 @@ func clientFromToken(_ context.Context, logger *zap.Logger, token string) (GitHu
 	}), nil
 }
 
-func clientFromPEM(ctx context.Context, logger *zap.Logger, baseRoundTripper http.RoundTripper, appID int64, installID int64, pemLoc string) (GitHub, error) {
+func clientFromPEM(ctx context.Context, logger *zap.Logger, baseRoundTripper http.RoundTripper, appID int64, installID int64, pemLoc string, pemKey string) (GitHub, error) {
 	if baseRoundTripper == nil {
 		baseRoundTripper = http.DefaultTransport
 	}
-	trans, err := ghinstallation.NewKeyFromFile(baseRoundTripper, appID, installID, pemLoc)
+	var trans *ghinstallation.Transport
+	var err error
+	if pemKey != "" {
+		trans, err = ghinstallation.New(baseRoundTripper, appID, installID, []byte(pemKey))
+	} else {
+		trans, err = ghinstallation.NewKeyFromFile(baseRoundTripper, appID, installID, pemLoc)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("unable to find key file: %w", err)
 	}
@@ -349,8 +357,8 @@ func NewGQLClient(ctx context.Context, logger *zap.Logger, cfg *NewGQLClientConf
 	if cfg != nil && cfg.Token != "" {
 		return clientFromToken(ctx, logger, cfg.Token)
 	}
-	if cfg != nil && cfg.PEMKeyLoc != "" {
-		return clientFromPEM(ctx, logger, cfg.Rt, cfg.AppID, cfg.InstallationID, cfg.PEMKeyLoc)
+	if cfg != nil && (cfg.PEMKeyLoc != "" || cfg.PEMKey != "") {
+		return clientFromPEM(ctx, logger, cfg.Rt, cfg.AppID, cfg.InstallationID, cfg.PEMKeyLoc, cfg.PEMKey)
 	}
 	if token := tokenFromGithubCLI(); token != "" {
 		return clientFromToken(ctx, logger, token)
