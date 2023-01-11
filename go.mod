@@ -5,7 +5,7 @@ go 1.19
 require (
 	github.com/bradleyfalzon/ghinstallation v1.1.1
 	github.com/joho/godotenv v1.4.0
-	github.com/shurcooL/githubv4 v0.0.0-20220520033151-0b4e3294ff00
+	github.com/shurcooL/githubv4 v0.0.0-20221229060216-a8d4a561cc93
 	github.com/shurcooL/graphql v0.0.0-20220606043923-3cf50f8a0a29
 	github.com/stretchr/testify v1.7.0
 	go.uber.org/zap v1.22.0
