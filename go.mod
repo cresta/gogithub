@@ -1,6 +1,6 @@
 module github.com/cresta/gogithub
 
-go 1.19
+go 1.20
 
 require (
 	github.com/bradleyfalzon/ghinstallation v1.1.1
