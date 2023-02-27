@@ -33,6 +33,12 @@ type GitHub interface {
 	AcceptPullRequest(ctx context.Context, approvalmessage string, owner string, name string, number int64) error
 	// MergePullRequest merges in a PR and closes it, but only if it's approved
 	MergePullRequest(ctx context.Context, owner string, name string, number int64) error
+	// EnablePullRequestAutoMerge enables auto-merge for the specified pull request
+	EnablePullRequestAutoMerge(ctx context.Context, owner string, name string, number int64) error
+	// FindPullRequest returns basic information for the specified pull request
+	FindPullRequest(ctx context.Context, owner string, name string, number int64) (*PullRequest, error)
+	// AddPRComment adds a comment to the specified pull request
+	AddPRComment(ctx context.Context, owner string, name string, number int64, body string) error
 	// FindPullRequestOid returns the OID of the PR
 	FindPullRequestOid(ctx context.Context, owner string, name string, number int64) (githubv4.ID, error)
 	GetAccessToken(ctx context.Context) (string, error)
@@ -48,6 +54,32 @@ type RepositoryInfo struct {
 		}
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
+
+type PullRequest struct {
+	ID githubv4.ID
+	// Number identifies the pull request number.
+	Number int64
+	// BaseRefName identifies the name of the base Ref associated with the pull request, even if the ref has been deleted.
+	BaseRefName string
+	// BaseRefOid identifies the oid of the base ref associated with the pull request, even if the ref has been deleted.
+	BaseRefOid githubv4.ID
+	// HeadRefName identifies the name of the head Ref associated with the pull request, even if the ref has been deleted.
+	HeadRefName string
+	// HeadRefOid identifies the oid of the head ref associated with the pull request, even if the ref has been deleted.
+	HeadRefOid githubv4.ID
+	// Body as Markdown.
+	Body string
+	// Closed is true if the pull request is closed.
+	State PullRequestState
+}
+
+type PullRequestState string
+
+const (
+	PullRequstClosed PullRequestState = "CLOSED"
+	PullRequstMerged PullRequestState = "MERGED"
+	PullRequstOpen   PullRequestState = "OPEN"
+)
 
 type createPullRequest struct {
 	CreatePullRequest struct {
@@ -242,6 +274,73 @@ func (g *GithubGraphqlAPI) FindPRForBranch(ctx context.Context, owner string, na
 	pr := query.Repository.PullRequests.Nodes[0]
 	g.findPrCache.Set(cacheKey, findPrValue{number: int64(pr.Number)})
 	return int64(pr.Number), nil
+}
+
+func (g *GithubGraphqlAPI) EnablePullRequestAutoMerge(ctx context.Context, owner string, name string, number int64) error {
+	prid, err := g.FindPullRequestOid(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("failed to find PR: %w", err)
+	}
+	g.Logger.Debug("EnablePullRequestAutoMerge", zap.String("owner", owner), zap.String("name", name), zap.Int64("number", number), zap.Any("prid", prid))
+	defer g.Logger.Debug("Done EnablePullRequestAutoMerge")
+	var ret struct {
+		AutoMergRequest struct {
+			PullRequest struct {
+				ID githubv4.ID
+			}
+		} `graphql:"enablePullRequestAutoMerge(input: $input)"`
+	}
+	mergeMethod := githubv4.PullRequestMergeMethodSquash
+	if err := g.ClientV4.Mutate(ctx, &ret, githubv4.EnablePullRequestAutoMergeInput{
+		PullRequestID: prid,
+		MergeMethod:   &mergeMethod,
+	}, nil); err != nil {
+		return fmt.Errorf("uanble to enable PR auto-merge: %w", err)
+	}
+	return nil
+}
+
+func (g *GithubGraphqlAPI) FindPullRequest(ctx context.Context, owner string, name string, number int64) (*PullRequest, error) {
+	g.Logger.Debug("FindPullRequest", zap.String("owner", owner), zap.String("name", name), zap.Int64("number", number))
+	defer g.Logger.Debug("Done FindPullRequest")
+	var query struct {
+		Repository struct {
+			PullRequest PullRequest `graphql:"pullRequest(number: $number)"`
+		} `graphql:"repository(owner: $owner, name: $name)"`
+	}
+	variables := map[string]interface{}{
+		"owner":  githubv4.String(owner),
+		"name":   githubv4.String(name),
+		"number": githubv4.Int(number),
+	}
+	err := g.ClientV4.Query(ctx, &query, variables)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query for PRs: %w", err)
+	}
+	if query.Repository.PullRequest.ID == 0 {
+		return nil, fmt.Errorf("failed to find PR %d", number)
+	}
+	return &query.Repository.PullRequest, nil
+}
+
+func (g *GithubGraphqlAPI) AddPRComment(ctx context.Context, owner string, name string, number int64, body string) error {
+	prid, err := g.FindPullRequestOid(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("failed to find PR: %w", err)
+	}
+	g.Logger.Debug("AddPRComment", zap.String("owner", owner), zap.String("name", name), zap.Int64("number", number), zap.Any("prid", prid))
+	defer g.Logger.Debug("Done AddPRComment")
+	var ret struct {
+		AddCommentRequest struct {
+		} `graphql:"addComment(input: $input)"`
+	}
+	if err := g.ClientV4.Mutate(ctx, &ret, githubv4.AddCommentInput{
+		SubjectID: prid,
+		Body:      githubv4.String(body),
+	}, nil); err != nil {
+		return fmt.Errorf("failed to add comment: %w", err)
+	}
+	return nil
 }
 
 type NewGQLClientConfig struct {
