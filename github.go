@@ -332,6 +332,7 @@ func (g *GithubGraphqlAPI) AddPRComment(ctx context.Context, owner string, name 
 	defer g.Logger.Debug("Done AddPRComment")
 	var ret struct {
 		AddCommentRequest struct {
+			ClientMutationId githubv4.String
 		} `graphql:"addComment(input: $input)"`
 	}
 	if err := g.ClientV4.Mutate(ctx, &ret, githubv4.AddCommentInput{
