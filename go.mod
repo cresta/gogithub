@@ -3,7 +3,7 @@ module github.com/cresta/gogithub
 go 1.20
 
 require (
-	github.com/bradleyfalzon/ghinstallation v1.1.1
+	github.com/bradleyfalzon/ghinstallation/v2 v2.0.0
 	github.com/joho/godotenv v1.5.1
 	github.com/shurcooL/githubv4 v0.0.0-20230215024106-420ad0987b9b
 	github.com/shurcooL/graphql v0.0.0-20220606043923-3cf50f8a0a29
