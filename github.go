@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"github.com/shurcooL/graphql"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
+	"gopkg.in/yaml.v3"
 )
 
 type GitHub interface {
@@ -351,6 +351,7 @@ type NewGQLClientConfig struct {
 	PEMKeyLoc      string
 	Token          string
 	PEMKey         string
+	CacheTTL       time.Duration
 }
 
 var DefaultGQLClientConfig = NewGQLClientConfig{
@@ -360,6 +361,7 @@ var DefaultGQLClientConfig = NewGQLClientConfig{
 	PEMKeyLoc:      os.Getenv("GITHUB_PEM_KEY_LOC"),
 	PEMKey:         os.Getenv("GITHUB_PEM_KEY"),
 	Token:          os.Getenv("GITHUB_TOKEN"),
+	CacheTTL:       time.Minute,
 }
 
 func intFromOsEnv(s string) int64 {
@@ -374,31 +376,31 @@ func intFromOsEnv(s string) int64 {
 	return i
 }
 
-func createGraphqlAPI(gql *githubv4.Client, httpClient *http.Client, logger *zap.Logger, tokenFunction func(context.Context) (string, error)) *GithubGraphqlAPI {
+func createGraphqlAPI(gql *githubv4.Client, httpClient *http.Client, logger *zap.Logger, cacheTtl time.Duration, tokenFunction func(context.Context) (string, error)) *GithubGraphqlAPI {
 	return &GithubGraphqlAPI{
 		HttpClient:    httpClient,
 		ClientV4:      gql,
 		Logger:        logger,
 		tokenFunction: tokenFunction,
 		findPrCache: ExpireCache[findPrKey, findPrValue]{
-			DefaultExpiry: time.Minute,
+			DefaultExpiry: cacheTtl,
 		},
 	}
 }
 
-func clientFromToken(_ context.Context, logger *zap.Logger, token string) (GitHub, error) {
+func clientFromToken(_ context.Context, logger *zap.Logger, token string, cacheTtl time.Duration) (GitHub, error) {
 	src := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
 	)
 	httpClient := oauth2.NewClient(context.Background(), src)
 	httpClient.Transport = DebugLogTransport(httpClient.Transport, logger)
 	gql := githubv4.NewClient(httpClient)
-	return createGraphqlAPI(gql, httpClient, logger, func(_ context.Context) (string, error) {
+	return createGraphqlAPI(gql, httpClient, logger, cacheTtl, func(_ context.Context) (string, error) {
 		return token, nil
 	}), nil
 }
 
-func clientFromPEM(ctx context.Context, logger *zap.Logger, baseRoundTripper http.RoundTripper, appID int64, installID int64, pemLoc string, pemKey string) (GitHub, error) {
+func clientFromPEM(ctx context.Context, logger *zap.Logger, baseRoundTripper http.RoundTripper, appID int64, installID int64, pemLoc string, pemKey string, cacheTtl time.Duration) (GitHub, error) {
 	if baseRoundTripper == nil {
 		baseRoundTripper = http.DefaultTransport
 	}
@@ -418,7 +420,7 @@ func clientFromPEM(ctx context.Context, logger *zap.Logger, baseRoundTripper htt
 	}
 	client := &http.Client{Transport: DebugLogTransport(trans, logger)}
 	gql := githubv4.NewClient(client)
-	return createGraphqlAPI(gql, client, logger, trans.Token), nil
+	return createGraphqlAPI(gql, client, logger, cacheTtl, trans.Token), nil
 }
 
 func tokenFromGithubCLI() string {
@@ -455,13 +457,13 @@ type configFileAuths struct {
 func NewGQLClient(ctx context.Context, logger *zap.Logger, cfg *NewGQLClientConfig) (GitHub, error) {
 	cfg = mergeGithubConfigs(cfg, &DefaultGQLClientConfig)
 	if cfg != nil && cfg.Token != "" {
-		return clientFromToken(ctx, logger, cfg.Token)
+		return clientFromToken(ctx, logger, cfg.Token, cfg.CacheTTL)
 	}
 	if cfg != nil && (cfg.PEMKeyLoc != "" || cfg.PEMKey != "") {
-		return clientFromPEM(ctx, logger, cfg.Rt, cfg.AppID, cfg.InstallationID, cfg.PEMKeyLoc, cfg.PEMKey)
+		return clientFromPEM(ctx, logger, cfg.Rt, cfg.AppID, cfg.InstallationID, cfg.PEMKeyLoc, cfg.PEMKey, cfg.CacheTTL)
 	}
 	if token := tokenFromGithubCLI(); token != "" {
-		return clientFromToken(ctx, logger, token)
+		return clientFromToken(ctx, logger, token, cfg.CacheTTL)
 	}
 	return nil, fmt.Errorf("no token provided: I need either GITHUB_TOKEN env, existing auth via the `gh` CLI, or a PEM key")
 }
