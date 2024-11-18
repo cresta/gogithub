@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/bradleyfalzon/ghinstallation"
+	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/shurcooL/githubv4"
 	"github.com/shurcooL/graphql"
 	"go.uber.org/zap"
